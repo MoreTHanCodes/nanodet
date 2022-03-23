@@ -117,3 +117,7 @@ work_dirs/
 *.pth
 *.py~
 *.sh~
+
+# Added by Tao
+results/
+workspace/
