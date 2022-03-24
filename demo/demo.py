@@ -4,6 +4,7 @@ import time
 
 import cv2
 import torch
+import numpy as np
 
 from nanodet.data.batch_process import stack_batch_img
 from nanodet.data.collate import naive_collate
@@ -24,6 +25,7 @@ def parse_args():
     parser.add_argument("--config", help="model config file path")
     parser.add_argument("--model", help="model file path")
     parser.add_argument("--path", default="./demo", help="path to images or video")
+    parser.add_argument("--pred_path", help="path to model preds")
     parser.add_argument("--camid", type=int, default=0, help="webcam demo camera id")
     parser.add_argument(
         "--save_result",
@@ -69,6 +71,26 @@ class Predictor(object):
         meta["img"] = stack_batch_img(meta["img"], divisible=32)
         with torch.no_grad():
             results = self.model.inference(meta)
+        return meta, results
+
+    def post_process(self, img, preds):
+        img_info = {"id": 0}
+        if isinstance(img, str):
+            img_info["file_name"] = os.path.basename(img)
+            img = cv2.imread(img)
+        else:
+            img_info["file_name"] = None
+
+        height, width = img.shape[:2]
+        img_info["height"] = height
+        img_info["width"] = width
+        meta = dict(img_info=img_info, raw_img=img, img=img)
+        meta = self.pipeline(None, meta, self.cfg.data.val.input_size)
+        meta["img"] = torch.from_numpy(meta["img"].transpose(2, 0, 1)).to(self.device)
+        meta = naive_collate([meta])
+        meta["img"] = stack_batch_img(meta["img"], divisible=32)
+        with torch.no_grad():
+            results = self.model.head.post_process(preds, meta)
         return meta, results
 
     def visualize(self, dets, meta, class_names, score_thres, wait=0):
@@ -152,6 +174,23 @@ def main():
                     break
             else:
                 break
+    elif args.demo == "preds":
+        files = [args.path]
+        pred_files = [args.pred_path]
+        files.sort()
+        pred_files.sort()
+        for image_name, pred_name in zip(files, pred_files):
+            float_array = np.fromfile(pred_name, dtype=np.float32)
+            preds = torch.from_numpy(float_array).reshape(1, 3598, 112)
+            meta, res = predictor.post_process(image_name, preds)
+            result_image = predictor.visualize(res[0], meta, cfg.class_names, 0.35)
+            if args.save_result:
+                save_folder = os.path.join(
+                    cfg.save_dir, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+                )
+                mkdir(local_rank, save_folder)
+                save_file_name = os.path.join(save_folder, os.path.basename(image_name))
+                cv2.imwrite(save_file_name, result_image)
 
 
 if __name__ == "__main__":

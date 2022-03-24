@@ -119,5 +119,6 @@ work_dirs/
 *.sh~
 
 # Added by Tao
+*.onnx
 results/
 workspace/
