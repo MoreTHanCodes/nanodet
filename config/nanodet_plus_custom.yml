@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/nanodet_plus_custom_sim_data
+save_dir: workspace/sim_data_mono_pretrain
 model:
   weight_averager:
     name: ExpMovingAverager
@@ -16,7 +16,7 @@ model:
       name: GhostPAN
       in_channels: [116, 232, 464]
       out_channels: 96
-      kernel_size: 5
+      kernel_size: 3
       num_extra_level: 1
       use_depthwise: True
       activation: LeakyReLU
@@ -26,7 +26,7 @@ model:
       input_channel: 96
       feat_channels: 96
       stacked_convs: 2
-      kernel_size: 5
+      kernel_size: 3
       strides: [8, 16, 32, 64]
       activation: LeakyReLU
       reg_max: 7
@@ -58,8 +58,8 @@ model:
 data:
   train:
     name: CocoDataset
-    img_path: /root/autodl-tmp/sim_ann_data/train
-    ann_path: /root/autodl-tmp/sim_ann_data/train.json
+    img_path: /root/autodl-tmp/sim_data_mono_l+r_ann/train
+    ann_path: /root/autodl-tmp/sim_data_mono_l+r_ann/train.json
     input_size: [448, 256] #[w,h]
     keep_ratio: False
     pipeline:
@@ -76,8 +76,8 @@ data:
       normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395]]
   val:
     name: CocoDataset
-    img_path: /root/autodl-tmp/sim_ann_data/val
-    ann_path: /root/autodl-tmp/sim_ann_data/val.json
+    img_path: /root/autodl-tmp/real_data_mono_l_ann/data
+    ann_path: /root/autodl-tmp/real_data_mono_l_ann/annotations.json
     input_size: [448, 256] #[w,h]
     keep_ratio: False
     pipeline:
@@ -85,8 +85,8 @@ data:
 
 device:
   gpu_ids: [0]
-  workers_per_gpu: 8
-  batchsize_per_gpu: 128
+  workers_per_gpu: 12
+  batchsize_per_gpu: 140
 schedule:
 #  resume:
 #  load_model: /home/ebook/tao_workspace/nanodet_tao/demo/nanodet-plus-m_416_checkpoint.ckpt
