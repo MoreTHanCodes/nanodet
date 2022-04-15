@@ -74,7 +74,8 @@ def main(args):
     logger.info("Creating model...")
     task = TrainingTask(cfg, evaluator)
 
-    ckpt = torch.load(args.model)
+    # ckpt = torch.load(args.model)
+    ckpt = torch.load(args.model, map_location=lambda storage, loc: storage)
     if "pytorch-lightning_version" not in ckpt:
         warnings.warn(
             "Warning! Old .pth checkpoint is deprecated. "

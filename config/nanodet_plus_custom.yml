@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/sim_data_mono_pretrain
+save_dir: workspace/sim_data_mono_pretrain_0.5x
 model:
   weight_averager:
     name: ExpMovingAverager
@@ -9,12 +9,12 @@ model:
     detach_epoch: 10
     backbone:
       name: ShuffleNetV2
-      model_size: 1.0x
+      model_size: 0.5x
       out_stages: [2,3,4]
       activation: LeakyReLU
     fpn:
       name: GhostPAN
-      in_channels: [116, 232, 464]
+      in_channels: [48, 96, 192]
       out_channels: 96
       kernel_size: 3
       num_extra_level: 1
@@ -86,7 +86,7 @@ data:
 device:
   gpu_ids: [0]
   workers_per_gpu: 12
-  batchsize_per_gpu: 140
+  batchsize_per_gpu: 160
 schedule:
 #  resume:
 #  load_model: /home/ebook/tao_workspace/nanodet_tao/demo/nanodet-plus-m_416_checkpoint.ckpt
