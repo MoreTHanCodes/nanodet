@@ -106,14 +106,16 @@ class ShuffleNetV2(nn.Module):
         self,
         model_size="1.5x",
         out_stages=(2, 3, 4),
+        num_input_images=1,
+        image_channels=3,
         with_last_conv=False,
         kernal_size=3,
         activation="ReLU",
         pretrain=True,
     ):
         super(ShuffleNetV2, self).__init__()
-        # out_stages can only be a subset of (2, 3, 4)
-        assert set(out_stages).issubset((2, 3, 4))
+        # out_stages can only be a subset of (1, 2, 3, 4)
+        assert set(out_stages).issubset((1, 2, 3, 4))
 
         print("model size is ", model_size)
 
@@ -135,10 +137,15 @@ class ShuffleNetV2(nn.Module):
             raise NotImplementedError
 
         # building first layer
-        input_channels = 3
+        assert num_input_images >= 1
+        assert image_channels in [1, 3]
+        self.num_input_images = num_input_images
+        self.image_channels = image_channels
+        input_channels = num_input_images * image_channels
         output_channels = self._stage_out_channels[0]
+        assert output_channels % num_input_images == 0
         self.conv1 = nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, 3, 2, 1, bias=False),
+            nn.Conv2d(input_channels, output_channels, 3, 2, 1, groups=num_input_images, bias=False),
             nn.BatchNorm2d(output_channels),
             act_layers(activation),
         )
@@ -174,9 +181,11 @@ class ShuffleNetV2(nn.Module):
         self._initialize_weights(pretrain)
 
     def forward(self, x):
+        output = []
         x = self.conv1(x)
         x = self.maxpool(x)
-        output = []
+        if 1 in self.out_stages:
+            output.append(x)
         for i in range(2, 5):
             stage = getattr(self, "stage{}".format(i))
             x = stage(x)
@@ -204,4 +213,11 @@ class ShuffleNetV2(nn.Module):
             if url is not None:
                 pretrained_state_dict = model_zoo.load_url(url)
                 print("=> loading pretrained model {}".format(url))
+                if self.num_input_images > 1 and self.image_channels == 3:
+                    pretrained_state_dict["conv1.0.weight"] = torch.cat(
+                        [pretrained_state_dict["conv1.0.weight"]] * self.num_input_images, 1) / self.num_input_images
+                elif self.image_channels == 1:
+                    _ = pretrained_state_dict.pop("conv1.0.weight")
+                else:
+                    pass
                 self.load_state_dict(pretrained_state_dict, strict=False)

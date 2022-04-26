@@ -13,7 +13,7 @@ from nanodet.model.arch import build_model
 from nanodet.util import Logger, cfg, load_config, load_model_weight
 from nanodet.util.path import mkdir
 
-image_ext = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
+image_ext = [".jpg", ".jpeg", ".webp", ".bmp", ".png", ".raw"]
 video_ext = ["mp4", "mov", "avi", "mkv"]
 
 
@@ -64,8 +64,9 @@ class Predictor(object):
         height, width = img.shape[:2]
         img_info["height"] = height
         img_info["width"] = width
-        meta = dict(img_info=img_info, raw_img=img, img=img)
+        meta = dict(img_info=img_info, raw_img=img, norm_img=img, img=img)
         meta = self.pipeline(None, meta, self.cfg.data.val.input_size)
+        meta["norm_img"] = meta["img"]
         meta["img"] = torch.from_numpy(meta["img"].transpose(2, 0, 1)).to(self.device)
         meta = naive_collate([meta])
         meta["img"] = stack_batch_img(meta["img"], divisible=32)
@@ -141,6 +142,13 @@ def main():
                 mkdir(local_rank, save_folder)
                 save_file_name = os.path.join(save_folder, os.path.basename(image_name))
                 cv2.imwrite(save_file_name, result_image)
+                norm_img = meta["norm_img"][0]
+                snpe_raw_filename = os.path.basename(image_name)
+                snpe_raw_filename, _ = os.path.splitext(snpe_raw_filename)
+                snpe_raw_filename += ".raw"
+                mkdir(local_rank, os.path.join(save_folder, "snpe_files"))
+                save_file_name = os.path.join(save_folder, "snpe_files", snpe_raw_filename)
+                norm_img.tofile(save_file_name)
             # ch = cv2.waitKey(0)
             # if ch == 27 or ch == ord("q") or ch == ord("Q"):
             #     break
@@ -175,13 +183,19 @@ def main():
             else:
                 break
     elif args.demo == "preds":
-        files = [args.path]
-        pred_files = [args.pred_path]
+        if os.path.isdir(args.path):
+            files = get_image_list(args.path)
+        else:
+            files = [args.path]
         files.sort()
+        if os.path.isdir(args.pred_path):
+            pred_files = get_image_list(args.pred_path)
+        else:
+            pred_files = [args.pred_path]
         pred_files.sort()
         for image_name, pred_name in zip(files, pred_files):
             float_array = np.fromfile(pred_name, dtype=np.float32)
-            preds = torch.from_numpy(float_array).reshape(1, 3598, 112)
+            preds = torch.from_numpy(float_array).reshape(1, 2380, 33)
             meta, res = predictor.post_process(image_name, preds)
             result_image = predictor.visualize(res[0], meta, cfg.class_names, 0.35)
             if args.save_result:

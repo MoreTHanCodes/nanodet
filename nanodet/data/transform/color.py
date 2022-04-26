@@ -45,10 +45,18 @@ def normalize(meta, mean, std):
     return meta
 
 
-def _normalize(img, mean, std):
-    mean = np.array(mean, dtype=np.float32).reshape(1, 1, 3) / 255
-    std = np.array(std, dtype=np.float32).reshape(1, 1, 3) / 255
-    img = (img - mean) / std
+def _normalize(img, mean, std, return_color=True):
+    if return_color:
+        mean = np.array(mean, dtype=np.float32).reshape(1, 1, 3) / 255
+        std = np.array(std, dtype=np.float32).reshape(1, 1, 3) / 255
+        img = (img - mean) / std
+    else:
+        img = cv2.cvtColor(img.astype(np.float32), cv2.COLOR_BGR2GRAY)
+        img = img.reshape(*img.shape, 1) # [H, W] => [H, W, 1]
+        # only consider Green channel
+        mean = np.array([mean[1]], dtype=np.float32).reshape(1, 1, 1) / 255
+        std = np.array([std[1]], dtype=np.float32).reshape(1, 1, 1) / 255
+        img = (img - mean) / std
     return img
 
 

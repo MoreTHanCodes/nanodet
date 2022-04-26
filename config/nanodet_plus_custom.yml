@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/sim_data_mono_pretrain_0.5x
+save_dir: workspace/sim_data_mono_gray_group_conv
 model:
   weight_averager:
     name: ExpMovingAverager
@@ -11,6 +11,8 @@ model:
       name: ShuffleNetV2
       model_size: 0.5x
       out_stages: [2,3,4]
+      num_input_images: 1
+      image_channels: 1
       activation: LeakyReLU
     fpn:
       name: GhostPAN
@@ -73,7 +75,7 @@ data:
       brightness: 0.2
       contrast: [0.6, 1.4]
       saturation: [0.5, 1.2]
-      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395]]
+      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395], False]
   val:
     name: CocoDataset
     img_path: /root/autodl-tmp/real_data_mono_l_ann/data
@@ -81,7 +83,7 @@ data:
     input_size: [448, 256] #[w,h]
     keep_ratio: False
     pipeline:
-      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395]]
+      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395], False]
 
 device:
   gpu_ids: [0]

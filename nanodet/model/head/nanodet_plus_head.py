@@ -498,25 +498,6 @@ class NanoDetPlusHead(nn.Module):
         priors = torch.stack([x, y, strides, strides], dim=-1)
         return priors.unsqueeze(0).repeat(batch_size, 1, 1)
 
-    def _forward_onnx(self, feats):
-        """only used for onnx export"""
-        outputs = []
-        for feat, cls_convs, gfl_cls in zip(
-            feats,
-            self.cls_convs,
-            self.gfl_cls,
-        ):
-            for conv in cls_convs:
-                feat = conv(feat)
-            output = gfl_cls(feat)
-            cls_pred, reg_pred = output.split(
-                [self.num_classes, 4 * (self.reg_max + 1)], dim=1
-            )
-            cls_pred = cls_pred.sigmoid()
-            out = torch.cat([cls_pred, reg_pred], dim=1)
-            outputs.append(out.flatten(start_dim=2))
-        return torch.cat(outputs, dim=2).permute(0, 2, 1)
-
     # def _forward_onnx(self, feats):
     #     """only used for onnx export"""
     #     outputs = []
@@ -528,6 +509,25 @@ class NanoDetPlusHead(nn.Module):
     #         for conv in cls_convs:
     #             feat = conv(feat)
     #         output = gfl_cls(feat)
-    #         outputs.append(output.flatten(start_dim=2))
-    #     outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
-    #     return outputs
+    #         cls_pred, reg_pred = output.split(
+    #             [self.num_classes, 4 * (self.reg_max + 1)], dim=1
+    #         )
+    #         cls_pred = cls_pred.sigmoid()
+    #         out = torch.cat([cls_pred, reg_pred], dim=1)
+    #         outputs.append(out.flatten(start_dim=2))
+    #     return torch.cat(outputs, dim=2).permute(0, 2, 1)
+
+    def _forward_onnx(self, feats):
+        """only used for onnx export"""
+        outputs = []
+        for feat, cls_convs, gfl_cls in zip(
+            feats,
+            self.cls_convs,
+            self.gfl_cls,
+        ):
+            for conv in cls_convs:
+                feat = conv(feat)
+            output = gfl_cls(feat)
+            outputs.append(output.flatten(start_dim=2))
+        outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
+        return outputs

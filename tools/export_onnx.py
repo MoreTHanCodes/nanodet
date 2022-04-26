@@ -96,6 +96,7 @@ if __name__ == "__main__":
     load_config(cfg, cfg_path)
     if input_shape is None:
         input_shape = cfg.data.train.input_size
+        input_shape = tuple([input_shape[1], input_shape[0]])
     else:
         input_shape = tuple(map(int, input_shape.split(",")))
         assert len(input_shape) == 2

@@ -6,7 +6,7 @@ model:
     decay: 0.9998
   arch:
     name: NanoDetPlus
-    detach_epoch: 0
+    detach_epoch: 10
     backbone:
       name: ShuffleNetV2
       model_size: 0.5x
@@ -94,10 +94,10 @@ schedule:
     name: AdamW
     lr: 0.001
     weight_decay: 0.05
-  # warmup:
-  #   name: linear
-  #   steps: 500
-  #   ratio: 0.0001
+  warmup:
+    name: linear
+    steps: 5
+    ratio: 0.0001
   total_epochs: 100
   lr_schedule:
     name: CosineAnnealingLR
