@@ -32,6 +32,11 @@ def parse_args():
         action="store_true",
         help="whether to save the inference result of image/video",
     )
+    parser.add_argument(
+        "--cpu_mode",
+        action="store_true",
+        help="whether to perform inference on cpu",
+    )
     args = parser.parse_args()
     return args
 
@@ -122,8 +127,10 @@ def main():
 
     load_config(cfg, args.config)
     logger = Logger(local_rank, use_tensorboard=False)
-    # predictor = Predictor(cfg, args.model, logger, device="cuda:0")
-    predictor = Predictor(cfg, args.model, logger, device="cpu")
+    if (not args.cpu_mode) and torch.cuda.is_available():
+        predictor = Predictor(cfg, args.model, logger, device="cuda:0")
+    else:
+        predictor = Predictor(cfg, args.model, logger, device="cpu")
     logger.log('Press "Esc", "q" or "Q" to exit.')
     current_time = time.localtime()
     if args.demo == "image":
