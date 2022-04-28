@@ -25,6 +25,10 @@ class NanoDetPlusHead(nn.Module):
             category.
         loss (dict): Loss config.
         input_channel (int): Number of channels of the input feature.
+        width_branch_size (int): Multi-view branches size along width axis.
+            Default: 1.
+        height_branch_size (int): Multi-view branches size along height axis.
+            Default: 1.
         feat_channels (int): Number of channels of the feature.
             Default: 96.
         stacked_convs (int): Number of conv layers in the stacked convs.
@@ -100,30 +104,33 @@ class NanoDetPlusHead(nn.Module):
             cls_convs, reg_convs = self._buid_not_shared_head()
             self.cls_convs.append(cls_convs)
             self.reg_convs.append(reg_convs)
-
-        self.gfl_cls = nn.ModuleList(
-            [
-                nn.Conv2d(
-                    self.feat_channels,
-                    self.num_classes,
-                    1,
-                    padding=0,
+        
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                gfl_cls = nn.ModuleList(
+                    [
+                        nn.Conv2d(
+                            self.feat_channels,
+                            self.num_classes,
+                            1,
+                            padding=0,
+                        )
+                        for _ in self.strides
+                    ]
                 )
-                for _ in self.strides
-            ]
-        )
-
-        self.gfl_reg = nn.ModuleList(
-            [
-                nn.Conv2d(
-                    self.feat_channels,
-                    4 * (self.reg_max + 1),
-                    1,
-                    padding=0,
+                gfl_reg = nn.ModuleList(
+                    [
+                        nn.Conv2d(
+                            self.feat_channels,
+                            4 * (self.reg_max + 1),
+                            1,
+                            padding=0,
+                        )
+                        for _ in self.strides
+                    ]
                 )
-                for _ in self.strides
-            ]
-        )
+                setattr(self, f"gfl_cls_h{h}_w{w}", gfl_cls)
+                setattr(self, f"gfl_reg_h{h}_w{w}", gfl_reg)
 
     def _buid_not_shared_head(self):
         cls_convs = nn.ModuleList()
@@ -165,33 +172,42 @@ class NanoDetPlusHead(nn.Module):
                 normal_init(m, std=0.01)
         # init cls head with confidence = 0.01
         bias_cls = -4.595
-        for i in range(len(self.strides)):
-            normal_init(self.gfl_cls[i], std=0.01, bias=bias_cls)
-            normal_init(self.gfl_reg[i], std=0.01)
-        print("Finish initialize NanoDet-Plus Head.")
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+                gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+                for i in range(len(self.strides)):
+                    normal_init(gfl_cls[i], std=0.01, bias=bias_cls)
+                    normal_init(gfl_reg[i], std=0.01)
+        print("Finish initialize multi-branches Nanodet Head.")
 
     def forward(self, feats):
         if torch.onnx.is_in_onnx_export():
             return self._forward_onnx(feats)
         outputs = []
-        for feat, cls_convs, reg_convs, gfl_cls, gfl_reg in zip(
+        for i, (feat, cls_convs, reg_convs) in enumerate(zip(
             feats,
             self.cls_convs,
-            self.reg_convs,
-            self.gfl_cls,
-            self.gfl_reg
-        ):
+            self.reg_convs
+        )):
             cls_feat = feat
             reg_feat = feat
             for cls_conv in cls_convs:
                 cls_feat = cls_conv(cls_feat)
             for reg_conv in reg_convs:
                 reg_feat = reg_conv(reg_feat)
-            cls_score = gfl_cls(cls_feat)
-            bbox_pred = gfl_reg(reg_feat)
-            output = torch.cat([cls_score, bbox_pred], dim=1)
-            outputs.append(output.flatten(start_dim=2))
-        outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
+            branch_outputs = []
+            for h in range(self.height_branch_size):
+                for w in range(self.width_branch_size):
+                    gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+                    gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+                    cls_score = gfl_cls[i](cls_feat)
+                    bbox_pred = gfl_reg[i](reg_feat)
+                    output = torch.cat([cls_score, bbox_pred], dim=1)
+                    branch_outputs.append(output.flatten(start_dim=2))
+            branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
+            outputs.append(branch_outputs)
+        outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
         return outputs
 
     def loss(self, preds, gt_meta, aux_preds=None):
@@ -210,6 +226,9 @@ class NanoDetPlusHead(nn.Module):
         device = preds.device
         batch_size = preds.shape[0]
         input_height, input_width = gt_meta["img"].shape[2:]
+        input_height = input_height // self.height_branch_size
+        input_width = input_width // self.width_branch_size
+
         featmap_sizes = [
             (math.ceil(input_height / stride), math.ceil(input_width) / stride)
             for stride in self.strides
@@ -225,54 +244,71 @@ class NanoDetPlusHead(nn.Module):
             )
             for i, stride in enumerate(self.strides)
         ]
-        center_priors = torch.cat(mlvl_center_priors, dim=1)
 
-        cls_preds, reg_preds = preds.split(
-            [self.num_classes, 4 * (self.reg_max + 1)], dim=-1
-        )
-        dis_preds = self.distribution_project(reg_preds) * center_priors[..., 2, None]
-        decoded_bboxes = distance2bbox(center_priors[..., :2], dis_preds)
+        total_loss = 0
+        total_loss_states = None
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                n = h * self.width_branch_size + w
+                branch_preds = preds[:, n]
+                cls_preds, reg_preds = branch_preds.split(
+                    [self.num_classes, 4 * (self.reg_max + 1)], dim=-1
+                )
+                center_priors = torch.cat(mlvl_center_priors, dim=1)
+                center_priors[..., 0] += (torch.ones_like(center_priors[..., 0]) * input_width * w)
+                center_priors[..., 1] += (torch.ones_like(center_priors[..., 1]) * input_height * h)
+                dis_preds = self.distribution_project(reg_preds) * center_priors[..., 2, None]
+                decoded_bboxes = distance2bbox(center_priors[..., :2], dis_preds)
 
-        if aux_preds is not None:
-            # use auxiliary head to assign
-            aux_cls_preds, aux_reg_preds = aux_preds.split(
-                [self.num_classes, 4 * (self.reg_max + 1)], dim=-1
-            )
-            aux_dis_preds = (
-                self.distribution_project(aux_reg_preds) * center_priors[..., 2, None]
-            )
-            aux_decoded_bboxes = distance2bbox(center_priors[..., :2], aux_dis_preds)
-            batch_assign_res = multi_apply(
-                self.target_assign_single_img,
-                aux_cls_preds.detach(),
-                center_priors,
-                aux_decoded_bboxes.detach(),
-                gt_bboxes,
-                gt_labels,
-            )
-        else:
-            # use self prediction to assign
-            batch_assign_res = multi_apply(
-                self.target_assign_single_img,
-                cls_preds.detach(),
-                center_priors,
-                decoded_bboxes.detach(),
-                gt_bboxes,
-                gt_labels,
-            )
+                if aux_preds is not None:
+                    # use auxiliary head to assign
+                    aux_branch_preds = aux_preds[:, n]
+                    aux_cls_preds, aux_reg_preds = aux_branch_preds.split(
+                        [self.num_classes, 4 * (self.reg_max + 1)], dim=-1
+                    )
+                    aux_dis_preds = (
+                        self.distribution_project(aux_reg_preds) * center_priors[..., 2, None]
+                    )
+                    aux_decoded_bboxes = distance2bbox(center_priors[..., :2], aux_dis_preds)
+                    batch_assign_res = multi_apply(
+                        self.target_assign_single_img,
+                        aux_cls_preds.detach(),
+                        center_priors,
+                        aux_decoded_bboxes.detach(),
+                        gt_bboxes,
+                        gt_labels,
+                    )
+                else:
+                    # use self prediction to assign
+                    batch_assign_res = multi_apply(
+                        self.target_assign_single_img,
+                        cls_preds.detach(),
+                        center_priors,
+                        decoded_bboxes.detach(),
+                        gt_bboxes,
+                        gt_labels,
+                    )
 
-        loss, loss_states = self._get_loss_from_assign(
-            cls_preds, reg_preds, decoded_bboxes, batch_assign_res
-        )
+                loss, loss_states = self._get_loss_from_assign(
+                    cls_preds, reg_preds, decoded_bboxes, batch_assign_res
+                )
 
-        if aux_preds is not None:
-            aux_loss, aux_loss_states = self._get_loss_from_assign(
-                aux_cls_preds, aux_reg_preds, aux_decoded_bboxes, batch_assign_res
-            )
-            loss = loss + aux_loss
-            for k, v in aux_loss_states.items():
-                loss_states["aux_" + k] = v
-        return loss, loss_states
+                if aux_preds is not None:
+                    aux_loss, aux_loss_states = self._get_loss_from_assign(
+                        aux_cls_preds, aux_reg_preds, aux_decoded_bboxes, batch_assign_res
+                    )
+                    loss = loss + aux_loss
+                    for k, v in aux_loss_states.items():
+                        loss_states["aux_" + k] = v
+                
+                total_loss += loss
+                if total_loss_states is None:
+                    total_loss_states = loss_states
+                else:
+                    for k, v in loss_states.items():
+                        total_loss_states[k] += v
+
+        return total_loss, total_loss_states
 
     def _get_loss_from_assign(self, cls_preds, reg_preds, decoded_bboxes, assign):
         device = cls_preds.device
@@ -482,9 +518,12 @@ class NanoDetPlusHead(nn.Module):
             results_list (list[tuple]): List of detection bboxes and labels.
         """
         device = cls_preds.device
-        b = cls_preds.shape[0]
+        batch_size = cls_preds.shape[0]
         input_height, input_width = img_metas["img"].shape[2:]
+        # NOTE: DO NOT consider width/height branch size in input_shape
         input_shape = (input_height, input_width)
+        input_height = input_height // self.height_branch_size
+        input_width = input_width // self.width_branch_size
 
         featmap_sizes = [
             (math.ceil(input_height / stride), math.ceil(input_width) / stride)
@@ -493,7 +532,7 @@ class NanoDetPlusHead(nn.Module):
         # get grid cells of one image
         mlvl_center_priors = [
             self.get_single_level_center_priors(
-                b,
+                batch_size,
                 featmap_sizes[i],
                 stride,
                 dtype=torch.float32,
@@ -501,24 +540,48 @@ class NanoDetPlusHead(nn.Module):
             )
             for i, stride in enumerate(self.strides)
         ]
-        center_priors = torch.cat(mlvl_center_priors, dim=1)
-        dis_preds = self.distribution_project(reg_preds) * center_priors[..., 2, None]
-        bboxes = distance2bbox(center_priors[..., :2], dis_preds, max_shape=input_shape)
-        scores = cls_preds.sigmoid()
+
+        batch_branches_bboxes = []
+        batch_branches_scores = []
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                n = h * self.width_branch_size + w
+                branch_reg_preds = reg_preds[:, n]
+                branch_cls_preds = cls_preds[:, n]
+                center_priors = torch.cat(mlvl_center_priors, dim=1)
+                center_priors[..., 0] += (torch.ones_like(center_priors[..., 0]) * input_width * w)
+                center_priors[..., 1] += (torch.ones_like(center_priors[..., 1]) * input_height * h)
+                branch_dis_preds = self.distribution_project(branch_reg_preds) * center_priors[..., 2, None]
+                branch_bboxes = distance2bbox(center_priors[..., :2], branch_dis_preds, max_shape=input_shape)
+                branch_scores = branch_cls_preds.sigmoid()
+                batch_branches_bboxes.append(branch_bboxes)
+                batch_branches_scores.append(branch_scores)
+        batch_branches_bboxes = torch.stack(batch_branches_bboxes, dim=1)
+        batch_branches_scores = torch.stack(batch_branches_scores, dim=1)
+
         result_list = []
-        for i in range(b):
-            # add a dummy background class at the end of all labels
-            # same with mmdetection2.0
-            score, bbox = scores[i], bboxes[i]
-            padding = score.new_zeros(score.shape[0], 1)
-            score = torch.cat([score, padding], dim=1)
-            results = multiclass_nms(
-                bbox,
-                score,
-                score_thr=0.05,
-                nms_cfg=dict(type="nms", iou_threshold=0.6),
-                max_num=100,
-            )
+        for b in range(batch_size):
+            branches_bboxes, branches_labels = [], []
+            for h in range(self.height_branch_size):
+                for w in range(self.width_branch_size):
+                    n = h * self.width_branch_size + w
+                    # add a dummy background class at the end of all labels
+                    # same with mmdetection2.0
+                    score, bbox = batch_branches_scores[b][n], batch_branches_bboxes[b][n]
+                    padding = score.new_zeros(score.shape[0], 1)
+                    score = torch.cat([score, padding], dim=1)
+                    bboxes, labels = multiclass_nms(
+                        bbox,
+                        score,
+                        score_thr=0.05,
+                        nms_cfg=dict(type="nms", iou_threshold=0.6),
+                        max_num=1, # NOTE: change this value accordingly
+                    )
+                    branches_bboxes.append(bboxes)
+                    branches_labels.append(labels)
+            branches_bboxes = torch.cat(branches_bboxes, dim=0)
+            branches_labels = torch.cat(branches_labels, dim=0)
+            results = tuple(branches_bboxes, branches_labels)
             result_list.append(results)
         return result_list
 
@@ -547,45 +610,55 @@ class NanoDetPlusHead(nn.Module):
 
     # def _forward_onnx(self, feats):
     #     outputs = []
-    #     for feat, cls_convs, reg_convs, gfl_cls, gfl_reg in zip(
+    #     for i, (feat, cls_convs, reg_convs) in enumerate(zip(
     #         feats,
     #         self.cls_convs,
-    #         self.reg_convs,
-    #         self.gfl_cls,
-    #         self.gfl_reg
-    #     ):
+    #         self.reg_convs
+    #     )):
     #         cls_feat = feat
     #         reg_feat = feat
     #         for cls_conv in cls_convs:
     #             cls_feat = cls_conv(cls_feat)
     #         for reg_conv in reg_convs:
     #             reg_feat = reg_conv(reg_feat)
-    #         cls_score = gfl_cls(cls_feat).sigmoid()
-    #         bbox_pred = gfl_reg(reg_feat)
-    #         output = torch.cat([cls_score, bbox_pred], dim=1)
-    #         outputs.append(output.flatten(start_dim=2))
-    #     outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
+    #         branch_outputs = []
+    #         for h in range(self.height_branch_size):
+    #             for w in range(self.width_branch_size):
+    #                 gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+    #                 gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+    #                 cls_score = gfl_cls[i](cls_feat).sigmoid()
+    #                 bbox_pred = gfl_reg[i](reg_feat)
+    #                 output = torch.cat([cls_score, bbox_pred], dim=1)
+    #                 branch_outputs.append(output.flatten(start_dim=2))
+    #         branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
+    #         outputs.append(branch_outputs)
+    #     outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
     #     return outputs
 
     def _forward_onnx(self, feats):
         """only used for onnx export"""
         outputs = []
-        for feat, cls_convs, reg_convs, gfl_cls, gfl_reg in zip(
+        for i, (feat, cls_convs, reg_convs) in enumerate(zip(
             feats,
             self.cls_convs,
-            self.reg_convs,
-            self.gfl_cls,
-            self.gfl_reg
-        ):
+            self.reg_convs
+        )):
             cls_feat = feat
             reg_feat = feat
             for cls_conv in cls_convs:
                 cls_feat = cls_conv(cls_feat)
             for reg_conv in reg_convs:
                 reg_feat = reg_conv(reg_feat)
-            cls_score = gfl_cls(cls_feat)
-            bbox_pred = gfl_reg(reg_feat)
-            output = torch.cat([cls_score, bbox_pred], dim=1)
-            outputs.append(output.flatten(start_dim=2))
-        outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
+            branch_outputs = []
+            for h in range(self.height_branch_size):
+                for w in range(self.width_branch_size):
+                    gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+                    gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+                    cls_score = gfl_cls[i](cls_feat)
+                    bbox_pred = gfl_reg[i](reg_feat)
+                    output = torch.cat([cls_score, bbox_pred], dim=1)
+                    branch_outputs.append(output.flatten(start_dim=2))
+            branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
+            outputs.append(branch_outputs)
+        outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
         return outputs

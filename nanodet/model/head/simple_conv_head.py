@@ -11,6 +11,8 @@ class SimpleConvHead(nn.Module):
         self,
         num_classes,
         input_channel,
+        width_branch_size=1,
+        height_branch_size=1,
         feat_channels=256,
         stacked_convs=4,
         strides=[8, 16, 32],
@@ -23,6 +25,12 @@ class SimpleConvHead(nn.Module):
         super(SimpleConvHead, self).__init__()
         self.num_classes = num_classes
         self.in_channels = input_channel
+        assert width_branch_size >= 1
+        assert height_branch_size >= 1
+        num_output_branches = width_branch_size * height_branch_size
+        self.width_branch_size = width_branch_size
+        self.height_branch_size = height_branch_size
+        self.num_ouput_branches = num_output_branches
         self.feat_channels = feat_channels
         self.stacked_convs = stacked_convs
         self.strides = strides
@@ -66,12 +74,18 @@ class SimpleConvHead(nn.Module):
                     activation=self.activation,
                 )
             )
-        self.gfl_cls = nn.Conv2d(
-            self.feat_channels, self.cls_out_channels, 3, padding=1
-        )
-        self.gfl_reg = nn.Conv2d(
-            self.feat_channels, 4 * (self.reg_max + 1), 3, padding=1
-        )
+
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                gfl_cls = nn.Conv2d(
+                    self.feat_channels, self.cls_out_channels, 3, padding=1
+                )
+                gfl_reg = nn.Conv2d(
+                    self.feat_channels, 4 * (self.reg_max + 1), 3, padding=1
+                )
+                setattr(self, f"gfl_cls_h{h}_w{w}", gfl_cls)
+                setattr(self, f"gfl_reg_h{h}_w{w}", gfl_reg)
+
         self.scales = nn.ModuleList([Scale(1.0) for _ in self.strides])
 
     def init_weights(self):
@@ -80,8 +94,12 @@ class SimpleConvHead(nn.Module):
         for m in self.reg_convs:
             normal_init(m.conv, std=0.01)
         bias_cls = -4.595
-        normal_init(self.gfl_cls, std=0.01, bias=bias_cls)
-        normal_init(self.gfl_reg, std=0.01)
+        for h in range(self.height_branch_size):
+            for w in range(self.width_branch_size):
+                gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+                gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+                normal_init(gfl_cls, std=0.01, bias=bias_cls)
+                normal_init(gfl_reg, std=0.01)
 
     def forward(self, feats):
         outputs = []
@@ -92,9 +110,17 @@ class SimpleConvHead(nn.Module):
                 cls_feat = cls_conv(cls_feat)
             for reg_conv in self.reg_convs:
                 reg_feat = reg_conv(reg_feat)
-            cls_score = self.gfl_cls(cls_feat)
-            bbox_pred = scale(self.gfl_reg(reg_feat)).float()
-            output = torch.cat([cls_score, bbox_pred], dim=1)
-            outputs.append(output.flatten(start_dim=2))
-        outputs = torch.cat(outputs, dim=2).permute(0, 2, 1)
+
+            branch_outputs = []
+            for h in range(self.height_branch_size):
+                for w in range(self.width_branch_size):
+                    gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+                    gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+                    cls_score = gfl_cls(cls_feat)
+                    bbox_pred = scale(gfl_reg(reg_feat)).float()
+                    output = torch.cat([cls_score, bbox_pred], dim=1)
+                    branch_outputs.append(output.flatten(start_dim=2))
+            branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
+            outputs.append(branch_outputs)
+        outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
         return outputs

@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/sim_data_mono_gray_group_conv
+save_dir: workspace/gray_mono_single_branch_220448
 model:
   weight_averager:
     name: ExpMovingAverager
@@ -11,7 +11,8 @@ model:
       name: ShuffleNetV2
       model_size: 0.5x
       out_stages: [2,3,4]
-      num_input_images: 1
+      width_batch_size: 1
+      height_batch_size: 1
       image_channels: 1
       activation: LeakyReLU
     fpn:
@@ -26,6 +27,8 @@ model:
       name: NanoDetPlusHead
       num_classes: 1
       input_channel: 96
+      width_branch_size: 1
+      height_branch_size: 1
       feat_channels: 96
       stacked_convs: 2
       kernel_size: 3
@@ -51,6 +54,8 @@ model:
       name: SimpleConvHead
       num_classes: 1
       input_channel: 192
+      width_branch_size: 1
+      height_branch_size: 1
       feat_channels: 192
       stacked_convs: 4
       strides: [8, 16, 32, 64]
@@ -62,7 +67,7 @@ data:
     name: CocoDataset
     img_path: /root/autodl-tmp/sim_data_mono_l+r_ann/train
     ann_path: /root/autodl-tmp/sim_data_mono_l+r_ann/train.json
-    input_size: [448, 256] #[w,h]
+    input_size: [448, 256] # [w, h]
     keep_ratio: False
     pipeline:
       # perspective: 0.0
@@ -80,7 +85,7 @@ data:
     name: CocoDataset
     img_path: /root/autodl-tmp/real_data_mono_l_ann/data
     ann_path: /root/autodl-tmp/real_data_mono_l_ann/annotations.json
-    input_size: [448, 256] #[w,h]
+    input_size: [448, 256] # [w, h]
     keep_ratio: False
     pipeline:
       normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395], False]
@@ -88,7 +93,7 @@ data:
 device:
   gpu_ids: [0]
   workers_per_gpu: 12
-  batchsize_per_gpu: 160
+  batchsize_per_gpu: 190
 schedule:
 #  resume:
 #  load_model: /home/ebook/tao_workspace/nanodet_tao/demo/nanodet-plus-m_416_checkpoint.ckpt
@@ -100,10 +105,10 @@ schedule:
     name: linear
     steps: 500
     ratio: 0.0001
-  total_epochs: 300
+  total_epochs: 150
   lr_schedule:
     name: CosineAnnealingLR
-    T_max: 300
+    T_max: 200
     eta_min: 0.00005
   val_intervals: 10
 grad_clip: 35
