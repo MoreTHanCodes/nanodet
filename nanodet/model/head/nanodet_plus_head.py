@@ -581,7 +581,7 @@ class NanoDetPlusHead(nn.Module):
                     branches_labels.append(labels)
             branches_bboxes = torch.cat(branches_bboxes, dim=0)
             branches_labels = torch.cat(branches_labels, dim=0)
-            results = tuple(branches_bboxes, branches_labels)
+            results = (branches_bboxes, branches_labels)
             result_list.append(results)
         return result_list
 
