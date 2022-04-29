@@ -146,9 +146,17 @@ class ShuffleNetV2(nn.Module):
         self.height_batch_size = height_batch_size
         self.num_input_images = num_input_images
         self.image_channels = image_channels
-        input_channels = image_channels
-        output_channels = self._stage_out_channels[0] // num_input_images
-        assert (output_channels * num_input_images) == self._stage_out_channels[0]
+        # input_channels = image_channels
+        # output_channels = self._stage_out_channels[0] // num_input_images
+        # assert (output_channels * num_input_images) == self._stage_out_channels[0]
+        # self.conv1 = nn.Sequential(
+        #     nn.Conv2d(input_channels, output_channels, 3, 2, 1, bias=False),
+        #     nn.BatchNorm2d(output_channels),
+        #     act_layers(activation),
+        # )
+        # input_channels = self._stage_out_channels[0]
+        input_channels = image_channels * num_input_images
+        output_channels = self._stage_out_channels[0]
         self.conv1 = nn.Sequential(
             nn.Conv2d(input_channels, output_channels, 3, 2, 1, bias=False),
             nn.BatchNorm2d(output_channels),
@@ -188,6 +196,17 @@ class ShuffleNetV2(nn.Module):
     def forward(self, x):
         H, W = x.shape[2], x.shape[3]
         BH, BW = self.height_batch_size, self.width_batch_size
+        # x_subs = []
+        # for bh in range(BH):
+        #     for bw in range(BW):
+        #         h0 = bh * (H // BH)
+        #         h1 = h0 + (H // BH)
+        #         w0 = bw * (W // BW)
+        #         w1 = w0 + (W // BW)
+        #         x_sub = x[:, :, h0:h1, w0:w1]
+        #         x_subs.append(self.conv1(x_sub))
+        # x = torch.cat(x_subs, dim=1)
+        # x = self.maxpool(x)
         x_subs = []
         for bh in range(BH):
             for bw in range(BW):
@@ -196,8 +215,9 @@ class ShuffleNetV2(nn.Module):
                 w0 = bw * (W // BW)
                 w1 = w0 + (W // BW)
                 x_sub = x[:, :, h0:h1, w0:w1]
-                x_subs.append(self.conv1(x_sub))
+                x_subs.append(x_sub)
         x = torch.cat(x_subs, dim=1)
+        x = self.conv1(x)
         x = self.maxpool(x)
 
         output = []
@@ -234,8 +254,8 @@ class ShuffleNetV2(nn.Module):
                     pass
                 else:
                     _ = pretrained_state_dict.pop("conv1.0.weight")
-                    _ = pretrained_state_dict.pop("conv1.1.weight")
-                    _ = pretrained_state_dict.pop("conv1.1.bias")
-                    _ = pretrained_state_dict.pop("conv1.1.running_mean")
-                    _ = pretrained_state_dict.pop("conv1.1.running_var")
+                    # _ = pretrained_state_dict.pop("conv1.1.weight")
+                    # _ = pretrained_state_dict.pop("conv1.1.bias")
+                    # _ = pretrained_state_dict.pop("conv1.1.running_mean")
+                    # _ = pretrained_state_dict.pop("conv1.1.running_var")
                 self.load_state_dict(pretrained_state_dict, strict=False)
