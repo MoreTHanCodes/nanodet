@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/gray_stereo_multi_branch_220429
+save_dir: workspace/gray_stereo_multi_branches_220429
 model:
   weight_averager:
     name: ExpMovingAverager

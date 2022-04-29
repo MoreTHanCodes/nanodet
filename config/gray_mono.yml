@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/gray_mono_single_branch_220448
+save_dir: workspace/gray_mono_single_branch_220429
 model:
   weight_averager:
     name: ExpMovingAverager
