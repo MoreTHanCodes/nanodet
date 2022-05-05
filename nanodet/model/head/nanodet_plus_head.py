@@ -608,35 +608,7 @@ class NanoDetPlusHead(nn.Module):
         priors = torch.stack([x, y, strides, strides], dim=-1)
         return priors.unsqueeze(0).repeat(batch_size, 1, 1)
 
-    # def _forward_onnx(self, feats):
-    #     outputs = []
-    #     for i, (feat, cls_convs, reg_convs) in enumerate(zip(
-    #         feats,
-    #         self.cls_convs,
-    #         self.reg_convs
-    #     )):
-    #         cls_feat = feat
-    #         reg_feat = feat
-    #         for cls_conv in cls_convs:
-    #             cls_feat = cls_conv(cls_feat)
-    #         for reg_conv in reg_convs:
-    #             reg_feat = reg_conv(reg_feat)
-    #         branch_outputs = []
-    #         for h in range(self.height_branch_size):
-    #             for w in range(self.width_branch_size):
-    #                 gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
-    #                 gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
-    #                 cls_score = gfl_cls[i](cls_feat).sigmoid()
-    #                 bbox_pred = gfl_reg[i](reg_feat)
-    #                 output = torch.cat([cls_score, bbox_pred], dim=1)
-    #                 branch_outputs.append(output.flatten(start_dim=2))
-    #         branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
-    #         outputs.append(branch_outputs)
-    #     outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
-    #     return outputs
-
     def _forward_onnx(self, feats):
-        """only used for onnx export"""
         outputs = []
         for i, (feat, cls_convs, reg_convs) in enumerate(zip(
             feats,
@@ -654,7 +626,7 @@ class NanoDetPlusHead(nn.Module):
                 for w in range(self.width_branch_size):
                     gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
                     gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
-                    cls_score = gfl_cls[i](cls_feat)
+                    cls_score = gfl_cls[i](cls_feat).sigmoid()
                     bbox_pred = gfl_reg[i](reg_feat)
                     output = torch.cat([cls_score, bbox_pred], dim=1)
                     branch_outputs.append(output.flatten(start_dim=2))
@@ -662,3 +634,31 @@ class NanoDetPlusHead(nn.Module):
             outputs.append(branch_outputs)
         outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
         return outputs
+
+    # def _forward_onnx(self, feats):
+    #     """only used for onnx export"""
+    #     outputs = []
+    #     for i, (feat, cls_convs, reg_convs) in enumerate(zip(
+    #         feats,
+    #         self.cls_convs,
+    #         self.reg_convs
+    #     )):
+    #         cls_feat = feat
+    #         reg_feat = feat
+    #         for cls_conv in cls_convs:
+    #             cls_feat = cls_conv(cls_feat)
+    #         for reg_conv in reg_convs:
+    #             reg_feat = reg_conv(reg_feat)
+    #         branch_outputs = []
+    #         for h in range(self.height_branch_size):
+    #             for w in range(self.width_branch_size):
+    #                 gfl_cls = getattr(self, f"gfl_cls_h{h}_w{w}")
+    #                 gfl_reg = getattr(self, f"gfl_reg_h{h}_w{w}")
+    #                 cls_score = gfl_cls[i](cls_feat)
+    #                 bbox_pred = gfl_reg[i](reg_feat)
+    #                 output = torch.cat([cls_score, bbox_pred], dim=1)
+    #                 branch_outputs.append(output.flatten(start_dim=2))
+    #         branch_outputs = torch.stack(branch_outputs, dim=1) # [B, N, C, Hi * Wi]
+    #         outputs.append(branch_outputs)
+    #     outputs = torch.cat(outputs, dim=3).permute(0, 1, 3, 2) # [B, N, \sum(Hi * Wi), C]
+    #     return outputs

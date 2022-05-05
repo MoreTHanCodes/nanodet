@@ -202,7 +202,7 @@ def main():
         pred_files.sort()
         for image_name, pred_name in zip(files, pred_files):
             float_array = np.fromfile(pred_name, dtype=np.float32)
-            preds = torch.from_numpy(float_array).reshape(1, 2380, 33)
+            preds = torch.from_numpy(float_array).reshape(1, 1, 2380, 33)
             meta, res = predictor.post_process(image_name, preds)
             result_image = predictor.visualize(res[0], meta, cfg.class_names, 0.35)
             if args.save_result:
