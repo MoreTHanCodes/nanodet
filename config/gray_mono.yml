@@ -1,5 +1,5 @@
 #Config File example
-save_dir: workspace/gray_mono_single_branch_220429
+save_dir: workspace/gray_mono_single_branch_220505
 model:
   weight_averager:
     name: ExpMovingAverager
@@ -92,14 +92,14 @@ data:
 
 device:
   gpu_ids: [0]
-  workers_per_gpu: 12
+  workers_per_gpu: 14
   batchsize_per_gpu: 190
 schedule:
 #  resume:
 #  load_model: /home/ebook/tao_workspace/nanodet_tao/demo/nanodet-plus-m_416_checkpoint.ckpt
   optimizer:
     name: AdamW
-    lr: 0.001
+    lr: 0.0015
     weight_decay: 0.05
   warmup:
     name: linear
@@ -108,7 +108,7 @@ schedule:
   total_epochs: 150
   lr_schedule:
     name: CosineAnnealingLR
-    T_max: 200
+    T_max: 150
     eta_min: 0.00005
   val_intervals: 10
 grad_clip: 35
@@ -116,6 +116,6 @@ evaluator:
   name: CocoDetectionEvaluator
   save_key: mAP
 log:
-  interval: 50
+  interval: 25
 
 class_names: ['controller']
