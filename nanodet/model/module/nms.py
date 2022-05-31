@@ -3,7 +3,7 @@ from torchvision.ops import nms
 
 
 def multiclass_nms(
-    multi_bboxes, multi_scores, score_thr, nms_cfg, max_num=-1, score_factors=None
+    multi_bboxes, multi_scores, score_thr, nms_cfg, max_num=-1, score_factors=None, multi_keypoints=None,
 ):
     """NMS for multi-class bboxes.
 
@@ -24,11 +24,17 @@ def multiclass_nms(
             are 0-based.
     """
     num_classes = multi_scores.size(1) - 1
+    keypoints = None
     # exclude background category
     if multi_bboxes.shape[1] > 4:
         bboxes = multi_bboxes.view(multi_scores.size(0), -1, 4)
+        if multi_keypoints is not None:
+            keypoints = multi_keypoints.view(multi_scores.size(0), -1, 2)
     else:
         bboxes = multi_bboxes[:, None].expand(multi_scores.size(0), num_classes, 4)
+        if multi_keypoints is not None:
+            keypoints = multi_keypoints[:, None].expand(multi_scores.size(0), num_classes, 2)
+
     scores = multi_scores[:, :-1]
 
     # filter out boxes with low scores
@@ -40,13 +46,17 @@ def multiclass_nms(
     bboxes = torch.masked_select(
         bboxes, torch.stack((valid_mask, valid_mask, valid_mask, valid_mask), -1)
     ).view(-1, 4)
+    if keypoints is not None:
+        keypoints = torch.masked_select(
+            keypoints, torch.stack((valid_mask, valid_mask), -1)
+        ).view(-1, 2)
     if score_factors is not None:
         scores = scores * score_factors[:, None]
     scores = torch.masked_select(scores, valid_mask)
     labels = valid_mask.nonzero(as_tuple=False)[:, 1]
 
     if bboxes.numel() == 0:
-        bboxes = multi_bboxes.new_zeros((0, 5))
+        bboxes = multi_bboxes.new_zeros((0, 5)) if keypoints is None else multi_bboxes.new_zeros((0, 7))
         labels = multi_bboxes.new_zeros((0,), dtype=torch.long)
 
         if torch.onnx.is_in_onnx_export():
@@ -56,7 +66,7 @@ def multiclass_nms(
             )
         return bboxes, labels
 
-    dets, keep = batched_nms(bboxes, scores, labels, nms_cfg)
+    dets, keep = batched_nms(bboxes, scores, labels, nms_cfg, keypoints)
 
     if max_num > 0:
         dets = dets[:max_num]
@@ -65,7 +75,7 @@ def multiclass_nms(
     return dets, labels[keep]
 
 
-def batched_nms(boxes, scores, idxs, nms_cfg, class_agnostic=False):
+def batched_nms(boxes, scores, idxs, nms_cfg, class_agnostic=False, keypoints=None):
     """Performs non-maximum suppression in a batched fashion.
     Modified from https://github.com/pytorch/vision/blob
     /505cd6957711af790211896d32b40291bea1bc21/torchvision/ops/boxes.py#L39.
@@ -118,5 +128,9 @@ def batched_nms(boxes, scores, idxs, nms_cfg, class_agnostic=False):
         keep = keep[scores[keep].argsort(descending=True)]
         boxes = boxes[keep]
         scores = scores[keep]
+    
+    if keypoints is not None:
+        keypoints = keypoints[keep]
+        return torch.cat([boxes, scores[:, None], keypoints], -1), keep
 
     return torch.cat([boxes, scores[:, None]], -1), keep
